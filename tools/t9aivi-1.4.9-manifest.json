@@ -1,0 +1,39 @@
+{
+ "release_date": "2021-07-23",
+ "product": "T9AF_px30",
+ "hw_ver": "1.0",
+ "fw_ver": "1.4.9",
+ "sections": [
+  {
+   "name": "pre_upgrade_script",
+   "type": "sh_script",
+   "skip": "no"
+  },
+  {
+   "name": "normal_boot",
+   "type": "bin",
+   "size": 5146624,
+   "flash_cmd": "flash_helper.sh",
+   "skip": "no"
+  },
+  {
+   "name": "normal_fs",
+   "type": "fs",
+   "size": 54378496,
+   "flash_cmd": "flash_helper.sh",
+   "skip": "no"
+  },
+  {
+   "name": "mcu",
+   "type": "img",
+   "size": 84318,
+   "flash_cmd": "flash_helper.sh",
+   "skip": "no"
+  },
+  {
+   "name": "post_upgrade_script",
+   "type": "sh_script",
+   "skip": "no"
+  }
+ ]
+}

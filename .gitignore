@@ -1,0 +1,8 @@
+.pio/
+__pycache__/
+*.pyc
+.DS_Store
+*.bin.tmp
+tools/*.bin
+tools/t9aivi/
+tools/found.json

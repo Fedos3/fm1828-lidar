@@ -1,0 +1,9 @@
+{
+  "name": "FM1828",
+  "version": "0.1.0",
+  "description": "Driver for the Ecovacs FM1828 dToF lidar (DEEBOT T8/T9/N8 Pro LDS unit): 460800 baud, $/startlds$/stoplds$ commands, 62-byte FA frames, 1440 points per revolution.",
+  "keywords": "lidar, ecovacs, fm1828, deebot, lds",
+  "license": "MIT",
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}

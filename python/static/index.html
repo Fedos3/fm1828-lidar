@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FM1828 Lidar</title>
+<style>
+  :root { --bg:#14171c; --panel:#1d2229; --line:#2b323b; --fg:#e6e9ee; --muted:#8b95a3; --accent:#4fc3f7; --ok:#66bb6a; --bad:#ef5350; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 -apple-system,Segoe UI,Roboto,sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0 12px 0 0; font-weight:600; }
+  .stat { color:var(--muted); } .stat b { color:var(--fg); font-weight:600; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--bad); margin-right:6px; vertical-align:middle; }
+  .dot.on { background:var(--ok); }
+  button { background:#2a3340; color:var(--fg); border:1px solid #3a4553; border-radius:6px; padding:6px 12px; cursor:pointer; }
+  button:hover { background:#354050; } button.primary { background:#1e88e5; border-color:#1e88e5; }
+  main { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:12px 16px; }
+  @media (max-width:1000px){ main { grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px; }
+  .card h2 { font-size:14px; margin:0 0 8px; color:var(--muted); font-weight:600; display:flex; justify-content:space-between; }
+  canvas { width:100%; max-width:min(100%, 72vh); aspect-ratio:1/1; display:block; margin:0 auto; background:#0d1014; border-radius:8px; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; padding:8px 16px 14px; color:var(--muted); }
+  .controls label { display:flex; align-items:center; gap:6px; }
+  input[type=range] { width:120px; }
+  .note { padding:0 16px 14px; color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>FM1828 Lidar</h1>
+  <span class="stat"><span class="dot" id="dot"></span><span id="conn">нет связи</span></span>
+  <span class="stat">источник: <b id="src">—</b></span>
+  <span class="stat">об/мин: <b id="rpm">—</b></span>
+  <span class="stat">скорость (raw): <b id="speed">—</b></span>
+  <span class="stat">точек/оборот: <b id="pts">—</b></span>
+  <span class="stat">кадров ок/плохих: <b id="frames">—</b></span>
+  <span class="stat">пропущено кадров: <b id="missing">—</b></span>
+  <button class="primary" id="btnStart">Запустить лидар</button>
+  <button id="btnStop">Остановить</button>
+  <button id="btnRestart" title="Требует ключ 5 В на GPIO4 моста">Перезапуск питания + старт</button>
+  <button id="btnClear">Очистить карту</button>
+</header>
+<div class="controls">
+  <label>Дальность <input type="range" id="range" min="1" max="12" step="0.5" value="6"> <span id="rangeV">6 м</span></label>
+  <label>Поворот <input type="range" id="rot" min="-180" max="180" step="1" value="0"> <span id="rotV">0°</span></label>
+  <label><input type="checkbox" id="mirror"> Зеркально</label>
+  <label>Ячейка карты <input type="range" id="cell" min="2" max="20" step="1" value="5"> <span id="cellV">5 см</span></label>
+  <label>Память карты <input type="range" id="decay" min="0" max="1" step="0.05" value="0.9"> <span id="decayV">0.90</span></label>
+  <label><input type="checkbox" id="trail" checked> След точек на скане</label>
+</div>
+<main>
+  <div class="card"><h2><span>Скан (полярный вид)</span><span id="scanInfo"></span></h2><canvas id="scan" width="800" height="800"></canvas></div>
+  <div class="card"><h2><span>Карта занятости</span><span id="mapInfo"></span></h2><canvas id="map" width="800" height="800"></canvas></div>
+</main>
+<div class="note">Лидар неподвижен, одометрии нет: карта — накопленная сетка занятости вокруг лидара (белое — свободно, чёрное — препятствие, серое — неизвестно). Направление нуля и сторона вращения не подтверждены: подберите «Поворот» и «Зеркально» по обстановке.</div>
+<script>
+const $ = id => document.getElementById(id);
+const scanC = $('scan'), mapC = $('map'), sctx = scanC.getContext('2d'), mctx = mapC.getContext('2d');
+let rangeM = 6, rotDeg = 0, mirror = false, cellCm = 5, decay = 0.9, trail = true;
+let lastScan = null, scanTimes = [], status = {};
+// occupancy grid: log-odds like integer counts
+let grid = null, gridN = 0;
+function makeGrid() { gridN = Math.round(rangeM * 2 * 100 / cellCm); grid = new Int16Array(gridN * gridN); }
+makeGrid();
+function toXY(aDeg, dMm) {
+  let a = (aDeg + rotDeg) * Math.PI / 180; if (mirror) a = -a;
+  return [Math.sin(a) * dMm / 1000, -Math.cos(a) * dMm / 1000]; // metres, 0° = up
+}
+function drawScan(scan) {
+  const W = scanC.width, cx = W / 2, cy = W / 2, ppm = (W / 2 - 20) / rangeM;
+  if (!trail) sctx.clearRect(0, 0, W, W); else { sctx.fillStyle = 'rgba(13,16,20,0.55)'; sctx.fillRect(0, 0, W, W); }
+  sctx.strokeStyle = '#2b323b'; sctx.lineWidth = 1; sctx.fillStyle = '#8b95a3'; sctx.font = '12px sans-serif';
+  const stepM = rangeM <= 3 ? 0.5 : (rangeM <= 8 ? 1 : 2);
+  for (let r = stepM; r <= rangeM + 1e-6; r += stepM) { sctx.beginPath(); sctx.arc(cx, cy, r * ppm, 0, Math.PI * 2); sctx.stroke(); sctx.fillText(r + ' м', cx + r * ppm + 3, cy - 3); }
+  sctx.beginPath(); sctx.moveTo(cx, cy - rangeM * ppm); sctx.lineTo(cx, cy + rangeM * ppm); sctx.moveTo(cx - rangeM * ppm, cy); sctx.lineTo(cx + rangeM * ppm, cy); sctx.stroke();
+  if (!scan) return;
+  sctx.fillStyle = '#4fc3f7';
+  for (let i = 0; i < scan.a.length; i++) {
+    const [x, y] = toXY(scan.a[i], scan.d[i]); if (Math.hypot(x, y) > rangeM) continue;
+    sctx.fillRect(cx + x * ppm - 1.5, cy + y * ppm - 1.5, 3, 3);
+  }
+  sctx.fillStyle = '#ffca28'; sctx.beginPath(); sctx.arc(cx, cy, 5, 0, Math.PI * 2); sctx.fill();
+  sctx.strokeStyle = '#ffca28'; sctx.lineWidth = 2; sctx.beginPath(); sctx.moveTo(cx, cy); sctx.lineTo(cx, cy - 18); sctx.stroke();
+}
+function updateGrid(scan) {
+  const half = gridN / 2, cpm = 100 / cellCm; // cells per metre
+  const dec = Math.round((1 - decay) * 8);
+  if (dec > 0) for (let i = 0; i < grid.length; i++) { const v = grid[i]; if (v > 0) grid[i] = Math.max(0, v - dec); else if (v < 0) grid[i] = Math.min(0, v + dec); }
+  for (let i = 0; i < scan.a.length; i++) {
+    const [x, y] = toXY(scan.a[i], scan.d[i]);
+    const gx = x * cpm + half, gy = y * cpm + half;
+    // ray from centre to hit: mark free cells
+    const steps = Math.ceil(Math.hypot(gx - half, gy - half));
+    for (let s = 1; s < steps - 1; s++) {
+      const fx = Math.floor(half + (gx - half) * s / steps), fy = Math.floor(half + (gy - half) * s / steps);
+      if (fx < 0 || fy < 0 || fx >= gridN || fy >= gridN) break;
+      const k = fy * gridN + fx; grid[k] = Math.max(-60, grid[k] - 2);
+    }
+    const hx = Math.floor(gx), hy = Math.floor(gy);
+    if (hx >= 0 && hy >= 0 && hx < gridN && hy < gridN) { const k = hy * gridN + hx; grid[k] = Math.min(60, grid[k] + 12); }
+  }
+}
+function drawMap() {
+  const W = mapC.width; const img = mctx.createImageData(gridN, gridN); const px = img.data;
+  let occ = 0;
+  for (let i = 0; i < grid.length; i++) {
+    const v = grid[i]; let c;
+    if (v > 6) { c = 20; occ++; } else if (v < -6) c = 235; else c = 110;
+    px[i * 4] = c; px[i * 4 + 1] = c; px[i * 4 + 2] = c; px[i * 4 + 3] = 255;
+  }
+  const off = document.createElement('canvas'); off.width = gridN; off.height = gridN; off.getContext('2d').putImageData(img, 0, 0);
+  mctx.imageSmoothingEnabled = false; mctx.clearRect(0, 0, W, W); mctx.drawImage(off, 0, 0, W, W);
+  const cx = W / 2, ppm = W / (2 * rangeM);
+  mctx.strokeStyle = 'rgba(79,195,247,0.35)'; mctx.lineWidth = 1;
+  for (let r = 1; r <= rangeM; r += 1) { mctx.beginPath(); mctx.arc(cx, cx, r * ppm, 0, Math.PI * 2); mctx.stroke(); }
+  mctx.fillStyle = '#ffca28'; mctx.beginPath(); mctx.arc(cx, cx, 5, 0, Math.PI * 2); mctx.fill();
+  mctx.strokeStyle = '#ffca28'; mctx.lineWidth = 2; mctx.beginPath(); mctx.moveTo(cx, cx); mctx.lineTo(cx, cx - 18); mctx.stroke();
+  $('mapInfo').textContent = `${gridN}×${gridN} ячеек по ${cellCm} см, занято: ${occ}`;
+}
+function connect() {
+  const es = new EventSource('/events');
+  es.onopen = () => { $('dot').classList.add('on'); $('conn').textContent = 'связь с сервером'; };
+  es.onerror = () => { $('dot').classList.remove('on'); $('conn').textContent = 'нет связи'; };
+  es.onmessage = ev => {
+    const scan = JSON.parse(ev.data); lastScan = scan;
+    const now = performance.now(); scanTimes.push(now); while (scanTimes.length && now - scanTimes[0] > 3000) scanTimes.shift();
+    const rpm = scanTimes.length > 1 ? 60 * (scanTimes.length - 1) / ((now - scanTimes[0]) / 1000) : 0;
+    $('rpm').textContent = rpm.toFixed(0); $('speed').textContent = scan.speed; $('pts').textContent = scan.a.length; $('missing').textContent = scan.missing;
+    $('scanInfo').textContent = `${scan.frames} кадров, ${scan.a.length} точек`;
+    drawScan(scan); updateGrid(scan); drawMap();
+  };
+}
+async function poll() {
+  try { status = await (await fetch('/api/status')).json();
+    $('src').textContent = status.source; $('frames').textContent = `${status.frames_ok}/${status.frames_bad}`;
+    if (!status.spinning) { $('conn').textContent = status.idle_frames ? 'лидар в режиме ожидания (не вращается)' : 'нет данных от лидара'; $('rpm').textContent = '0'; }
+    else $('conn').textContent = 'лидар вращается';
+  } catch (e) {}
+  setTimeout(poll, 1000);
+}
+$('btnStart').onclick = () => fetch('/api/start', { method: 'POST' });
+$('btnStop').onclick = () => fetch('/api/stop', { method: 'POST' });
+$('btnRestart').onclick = () => fetch('/api/restart', { method: 'POST' });
+$('btnClear').onclick = () => { makeGrid(); drawMap(); };
+$('range').oninput = e => { rangeM = +e.target.value; $('rangeV').textContent = rangeM + ' м'; makeGrid(); drawScan(lastScan); drawMap(); };
+$('rot').oninput = e => { rotDeg = +e.target.value; $('rotV').textContent = rotDeg + '°'; makeGrid(); };
+$('mirror').onchange = e => { mirror = e.target.checked; makeGrid(); };
+$('cell').oninput = e => { cellCm = +e.target.value; $('cellV').textContent = cellCm + ' см'; makeGrid(); };
+$('decay').oninput = e => { decay = +e.target.value; $('decayV').textContent = decay.toFixed(2); };
+$('trail').onchange = e => { trail = e.target.checked; };
+drawScan(null); drawMap(); connect(); poll();
+</script>
+</body>
+</html>
