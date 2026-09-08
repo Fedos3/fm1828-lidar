@@ -38,7 +38,8 @@
   <span class="stat">пропущено кадров: <b id="missing">—</b></span>
   <button class="primary" id="btnStart">Запустить лидар</button>
   <button id="btnStop">Остановить</button>
-  <button id="btnRestart" title="Требует ключ 5 В на GPIO4 моста">Перезапуск питания + старт</button>
+  <button id="btnRestart">Стоп + старт</button>
+  <button id="btnSnap" title="Сохранить оба полотна как PNG на стороне сервера">Сохранить PNG</button>
   <button id="btnClear">Очистить карту</button>
 </header>
 <div class="controls">
@@ -140,8 +141,13 @@ async function poll() {
   setTimeout(poll, 1000);
 }
 $('btnStart').onclick = () => fetch('/api/start', { method: 'POST' });
-$('btnStop').onclick = () => fetch('/api/stop', { method: 'POST' });
+$('btnStop').onclick = () => { if (confirm('После stoplds$ лидар не примет новый запуск 10–15 минут (пока сам не уйдёт в сон) или до снятия питания. Остановить?')) fetch('/api/stop', { method: 'POST' }); };
 $('btnRestart').onclick = () => fetch('/api/restart', { method: 'POST' });
+$('btnSnap').onclick = async () => {
+  const body = { scan: scanC.toDataURL('image/png'), map: mapC.toDataURL('image/png') };
+  const r = await fetch('/api/snapshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json(); $('conn').textContent = j.ok ? ('PNG сохранены: ' + j.files.join(', ')) : ('ошибка: ' + j.error);
+};
 $('btnClear').onclick = () => { makeGrid(); drawMap(); };
 $('range').oninput = e => { rangeM = +e.target.value; $('rangeV').textContent = rangeM + ' м'; makeGrid(); drawScan(lastScan); drawMap(); };
 $('rot').oninput = e => { rotDeg = +e.target.value; $('rotV').textContent = rotDeg + '°'; makeGrid(); };
