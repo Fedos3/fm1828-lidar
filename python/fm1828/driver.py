@@ -50,6 +50,7 @@ class SerialSource:
         try:
             self._open()
             self.reconnects += 1
+            self.last_error = None
         except Exception as e:
             self.last_error = f'reopen failed: {e}'
 
