@@ -117,7 +117,7 @@ class Handler(BaseHTTPRequestHandler):
             print(time.strftime('%H:%M:%S'), 'POST', self.path, body[:80].decode('utf-8', 'replace'), 'from', self.client_address[0], flush=True)
         if self.path == '/api/start':
             threading.Thread(target=lidar.start_motor, daemon=True).start()
-            return self._send(200, '{"ok":true,"note":"startldspl$ sent; fallback $ + startlds$ after 3 s"}')
+            return self._send(200, '{"ok":true,"note":"$ sent, startlds$ follows in 2 s"}')
         if self.path == '/api/stop':
             lidar.stop_motor()
             return self._send(200, '{"ok":true}')

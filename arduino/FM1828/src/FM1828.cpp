@@ -35,8 +35,9 @@ void FM1828::restart() {
 
 void FM1828::sendRaw(const char* s) { if (stream_) { stream_->write((const uint8_t*)s, strlen(s)); stream_->flush(); } }
 
-// Robot-like start: "startldspl$" first; if no frames within 3 s, loop() sends "$" and then "startlds$".
-void FM1828::start() { sendRaw("startldspl$"); startPending_ = true; startAtMs_ = millis() + 3000; startFramesRef_ = framesOk_; }
+// Proven start: "$" now, "startlds$" 2 s later (from loop()). "startldspl$" alone only test-spins the motor for
+// a few seconds and then the lidar locks like after "stoplds$", so it is not used.
+void FM1828::start() { sendRaw("$"); startPending_ = true; startAtMs_ = millis() + 2000; }
 
 void FM1828::stop() { startPending_ = false; sendRaw("stoplds$"); }
 
@@ -65,11 +66,7 @@ void FM1828::handleFrame(const uint8_t* f) {
 
 void FM1828::loop() {
   if (!stream_) return;
-  if (startPending_ && (int32_t)(millis() - startAtMs_) >= 0) {
-    startPending_ = false;
-    if (framesOk_ == startFramesRef_) { sendRaw("$"); fallbackPending_ = true; fallbackAtMs_ = millis() + 2000; }
-  }
-  if (fallbackPending_ && (int32_t)(millis() - fallbackAtMs_) >= 0) { fallbackPending_ = false; sendRaw("startlds$"); }
+  if (startPending_ && (int32_t)(millis() - startAtMs_) >= 0) { startPending_ = false; sendRaw("startlds$"); }
   while (stream_->available() > 0) {
     int c = stream_->read();
     if (c < 0) break;

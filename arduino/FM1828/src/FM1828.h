@@ -27,7 +27,7 @@ class FM1828 {
   void powerOff();
   void restart();        // blocking ~4 s: power off 1.5 s, power on, settle, then start()
 
-  void start();          // non-blocking: "startldspl$", then "$" + "startlds$" fallback from loop() if silent
+  void start();          // non-blocking: sends "$", then "startlds$" 2 s later from loop()
   void stop();           // sends "stoplds$"
   void sendRaw(const char* s);
   void loop();           // call often: parses incoming bytes, fires callbacks
@@ -51,10 +51,10 @@ class FM1828 {
   Stream* stream_ = nullptr;
   HardwareSerial* hw_ = nullptr; int rxPin_ = -1, txPin_ = -1, powerPin_ = -1; bool powerActiveHigh_ = true;
   uint8_t buf_[128]; uint8_t len_ = 0;
-  uint32_t framesOk_ = 0, framesBad_ = 0, idleFrames_ = 0, scans_ = 0, lastFrameMs_ = 0, startAtMs_ = 0, fallbackAtMs_ = 0, startFramesRef_ = 0;
+  uint32_t framesOk_ = 0, framesBad_ = 0, idleFrames_ = 0, scans_ = 0, lastFrameMs_ = 0, startAtMs_ = 0;
   uint16_t speed_ = 0, idleMm_ = 0, scanPoints_ = 0;
   uint8_t scanFrames_ = 0, scanMissing_ = 0;
   int lastIdx_ = -1;
-  bool ackSeen_ = false, startPending_ = false, fallbackPending_ = false;
+  bool ackSeen_ = false, startPending_ = false;
   PointCallback pointCb_ = nullptr; ScanCallback scanCb_ = nullptr;
 };

@@ -9,7 +9,7 @@ from .protocol import StreamParser, Scan, FRAME_LEN
 BAUD = 460800
 CMD_ACK = b'$'
 CMD_START = b'startlds$'
-CMD_START_PLUS = b'startldspl$'   # "plus startup" string from the DEEBOT T9 AIVI firmware (sent by the robot before startlds$)
+CMD_START_PLUS = b'startldspl$'   # "plus startup" from the DEEBOT firmware; alone it only test-spins for a few seconds
 CMD_STOP = b'stoplds$'
 START_DELAY_S = 2.0   # "$" first, then startlds$ after this delay: startlds$ alone as the first command is ignored
 # Escape sequences understood by firmware/bridge (need a 5 V high-side switch on GPIO4); never reach the lidar.
@@ -145,18 +145,19 @@ class FM1828:
         self.source.close()
 
     def start_motor(self):
-        """Robot-like start: "startldspl$" then, if no scan frames within 3 s, "$" + "startlds$"."""
-        before = self.parser.frames_ok
-        with self._lock:
-            self.source.write(CMD_START_PLUS)
-        time.sleep(3.0)
-        if self.parser.frames_ok > before:
-            return True
+        """Proven start: "$", 2 s, "startlds$" (ran 20+ minutes). "startldspl$" alone only spins the motor for
+        about 1-4 s and then the lidar locks like after "stoplds$", so it is not used here."""
         with self._lock:
             self.source.write(CMD_ACK)
             time.sleep(START_DELAY_S)
             self.source.write(CMD_START)
-        return False
+        return True
+
+    def plus_startup(self):
+        """Robot's "plus startup" string "startldspl$startlds$" (sent as one write). Use only from a fresh/silent
+        state; "startldspl$" without the trailing "startlds$" stops after a few seconds and locks the lidar."""
+        with self._lock:
+            self.source.write(CMD_START_PLUS + CMD_START)
 
     def stop_motor(self):
         with self._lock:
